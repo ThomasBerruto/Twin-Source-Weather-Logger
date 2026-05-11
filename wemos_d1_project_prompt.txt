@@ -1,0 +1,285 @@
+Hardware:
+Wemos D1 R32 board with an datalogging shield (RTC module and SD card module) having a DHT-22 temperature module connected.
+
+Data collected by Hardware: DHT22: Current Temperature and Current humidity, Web wheather: Zip code current Temperature, Zip code current humidity, etc
+Arduino Iot Cloud used for logging and monitoring sensor values. A dashboard was built with visual on sensor values like Temperature, humidity, etc
+
+- need to provide short description on the data transmition and any other protocol used at this project
+- why chose hardware was a good choice for exploration of an end to end system for collection and monitoring of sensor data
+- data logged in the SD card will be used to perform data analysis and insights using python numpy, pandas, seaborn visualitions and Streamlit dashboard. Please proposed analyses that can be performed with this data that can help learn basic principles of data analysis.
+
+For the report:
+- attractive name for the document
+- Learning Objectives achieved with this project
+- formats(please provide downloadable files): linkedin post, Markdown document(that could be shared in GitHub) with description of the project snipets, web page with description of the project code snipets, etc
+
+ARDUINO/WEMOS D1 code:
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+//#include <HttpClient.h>
+#include <ArduinoJson.h>
+#include <SD.h>
+#include <RTClib.h>
+#include <time.h>
+
+#include <DHT.h>
+#include <DHT_U.h>
+
+#include <ArduinoIoTCloud.h>
+#include <Arduino_ConnectionHandler.h>
+
+// -----------------------------
+// USER CONFIGURATION
+// -----------------------------
+const char* WIFI_SSID = "ATT6F45LMn";
+const char* WIFI_PASS = "6ntq4r#xni+5";
+
+#define DHTPIN 26
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+const int SD_CS_PIN = 5;   // adjust if needed
+RTC_DS1307 rtc;
+
+const unsigned long INTERVAL_MS = 10UL * 60UL * 1000UL;  // 10 minutes
+unsigned long lastRun = 0;
+
+// -----------------------------
+// ARDUINO IOT CLOUD
+// -----------------------------
+const char DEVICE_ID[] = "713a532e-96b5-41cd-b4cb-31fe85ba91b3";
+const char SECRET_KEY[] = "DGGWzimH4oj8c?t#9vDyv72vE";
+
+float temperature;
+float humidity;
+float webTemp;
+float webHumidity;
+
+WiFiConnectionHandler ArduinoIoTPreferredConnection(WIFI_SSID, WIFI_PASS);
+
+// -----------------------------
+// CSV LOGGING
+// -----------------------------
+void logToCSV(String line) {
+  File f = SD.open("/sensor_log.csv", FILE_APPEND);
+  if (f) {
+    f.println(line);
+    f.close();
+  }
+}
+
+// -----------------------------
+// WEATHER FETCH
+// -----------------------------
+bool fetchWeather(String zipcode, float &tempF, float &feelsF, float &humidity) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  HTTPClient http;
+  //HttpClient http(c);
+  String url = "http://wttr.in/" + zipcode + "?format=j1";
+  http.begin(url);
+
+  int code = http.GET();
+  if (code != 200) {
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  StaticJsonDocument<4096> doc;
+  if (deserializeJson(doc, payload)) return false;
+
+  tempF = doc["current_condition"][0]["temp_F"].as<float>();
+  feelsF = doc["current_condition"][0]["FeelsLikeF"].as<float>();
+  humidity = doc["current_condition"][0]["humidity"].as<float>();
+
+  return true;
+}
+
+// -----------------------------
+// SETUP
+// -----------------------------
+void setup() {
+  Serial.begin(115200);
+
+  dht.begin();
+
+  // WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  
+  // Set timezone and NTP servers
+  configTime(-6 * 3600, 3600, "pool.ntp.org", "time.nist.gov");
+  //  -6*3600 = CST offset
+  //   3600   = daylight savings offset
+  Serial.println("Syncing time with NTP...");
+  
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.println("Waiting for NTP...");
+    delay(500);
+  }
+  
+  Serial.println("Time synced!");
+
+  // SD card
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("SD init failed!");
+  } else {
+    Serial.println("SD OK");
+  }
+
+  // RTC
+  if (!rtc.begin()) {
+    Serial.println("RTC not found!");
+  }
+  if (!rtc.isrunning()) {
+    Serial.println("RTC not running, setting time...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  // Create CSV if not exists
+  if (!SD.exists("/sensor_log.csv")) {
+    File f = SD.open("/sensor_log.csv", FILE_WRITE);
+    f.println("date_time,date,hour,minutes,seconds,sensor_name,measurement,sensor_value,Units");
+    f.close();
+  }
+
+  // IoT Cloud
+  ArduinoCloud.setBoardId(DEVICE_ID);
+  ArduinoCloud.setSecretDeviceKey(SECRET_KEY);
+
+  ArduinoCloud.addProperty(temperature, READWRITE);
+  ArduinoCloud.addProperty(humidity, READWRITE);
+  ArduinoCloud.addProperty(webTemp, READWRITE);
+  ArduinoCloud.addProperty(webHumidity, READWRITE);
+
+  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+}
+
+// -----------------------------
+// MAIN LOOP
+// -----------------------------
+void loop() {
+  ArduinoCloud.update();
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastRun < INTERVAL_MS) return;
+  lastRun = nowMs;
+
+  //DateTime now = rtc.now();  //replacing rtc module time with web date time 
+  //char timestamp[20];
+  //sprintf(timestamp, "%04d-%02d-%02d %02d:%02d:%02d",
+  //        now.year(), now.month(), now.day(),
+  //        now.hour(), now.minute(), now.second());
+
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+
+  char timestamp[20];
+  sprintf(timestamp, "%04d-%02d-%02d %02d:%02d:%02d",
+          timeinfo.tm_year + 1900,
+          timeinfo.tm_mon + 1,
+          timeinfo.tm_mday,
+          timeinfo.tm_hour,
+          timeinfo.tm_min,
+          timeinfo.tm_sec);
+
+  // -----------------------------
+  // READ DHT22 SENSOR
+  // -----------------------------
+  float t = dht.readTemperature(true);  // Fahrenheit
+  float h = dht.readHumidity();
+
+  if (!isnan(t) && !isnan(h)) {
+    temperature = t;
+    humidity = h;
+
+    char csv[256];
+    //sprintf(csv, "%s,%02d/%02d/%04d,%02d,%02d,%02d,DHT22,Temperature,%.2f,F",
+    //        timestamp,
+    //        now.month(), now.day(), now.year(),
+    //        now.hour(), now.minute(), now.second(),
+    //        t);
+    sprintf(csv, "%s,%02d/%02d/%04d,%02d,%02d,%02d,DHT22,Temperature,%.2f,F",
+            timestamp,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec,
+            t);
+    logToCSV(csv);
+
+    //sprintf(csv, "%s,%02d/%02d/%04d,%02d,%02d,%02d,DHT22,Humidity,%.2f,%%",
+    //        timestamp,
+    //        now.month(), now.day(), now.year(),
+    //        now.hour(), now.minute(), now.second(),
+    //        h);
+    sprintf(csv, "%s,%02d/%02d/%04d,%02d,%02d,%02d,DHT22,Humidity,%.2f,%%",
+            timestamp,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec,
+            h);
+    logToCSV(csv);
+  }
+
+  // -----------------------------
+  // WEATHER LOGGING
+  // -----------------------------
+  float tempF, feelsF, humW;
+  if (fetchWeather("75024", tempF, feelsF, humW)) {
+    webTemp = tempF;
+    webHumidity = humW;
+
+    char csv1[256];
+    //sprintf(csv1, "%s,%02d/%02d/%04d,%02d,%02d,%02d,web_weather_wttr.in,web_temp75024,%.2f,F",
+    //        timestamp,
+    //        now.month(), now.day(), now.year(),
+    //        now.hour(), now.minute(), now.second(),
+    //        tempF);
+    sprintf(csv1, "%s,%02d/%02d/%04d,%02d,%02d,%02d,web_weather_wttr.in,web_temp75024,%.2f,F",
+            timestamp,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec,
+            tempF);
+    logToCSV(csv1);
+
+    char csv2[256];
+    //sprintf(csv2, "%s,%02d/%02d/%04d,%02d,%02d,%02d,web_weather_wttr.in,web_humidity75024,%.2f,%%",
+    //        timestamp,
+    //        now.month(), now.day(), now.year(),
+    //        now.hour(), now.minute(), now.second(),
+    //        humW);
+
+    sprintf(csv2, "%s,%02d/%02d/%04d,%02d,%02d,%02d,web_weather_wttr.in,web_humidity75024,%.2f,%%",
+            timestamp,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec,
+            humW);            
+    logToCSV(csv2);
+  }
+
+  Serial.println("Logged. Sleeping...");
+}

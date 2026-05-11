@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Twin-Source Weather Logger: Edge-to-Cloud IoT + Data Science</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; line-height: 1.55; margin: 2rem; max-width: 980px; }
+    header { padding-bottom: 1rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 1.5rem; }
+    h1 { font-size: 2rem; margin: 0; }
+    h2 { margin-top: 1.6rem; }
+    code, pre { background: #f3f4f6; padding: .15rem .35rem; border-radius: .4rem; }
+    pre { padding: 1rem; overflow:auto; }
+    .pill { display:inline-block; padding:.2rem .6rem; border-radius: 999px; background:#eef2ff; margin-right:.4rem; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .card { border:1px solid #e5e7eb; border-radius: 16px; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,.04); }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Twin-Source Weather Logger: Edge-to-Cloud IoT + Data Science</h1>
+  <p><span class="pill">Edge</span><span class="pill">Cloud</span><span class="pill">Offline Logging</span><span class="pill">Python Analytics</span></p>
+</header>
+
+<section class="grid">
+  <div class="card">
+    <h2>What it does</h2>
+    <ul>
+      <li>Reads indoor temperature/humidity from a DHT22 sensor</li>
+      <li>Fetches outdoor weather for a ZIP code using <code>wttr.in</code> JSON</li>
+      <li>Publishes values to an Arduino IoT Cloud dashboard</li>
+      <li>Logs all measurements to an SD card CSV for later analysis</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>Protocols touched</h2>
+    <ul>
+      <li>Wi‑Fi → Internet connectivity</li>
+      <li>HTTP GET + JSON parsing (weather API)</li>
+      <li>NTP for timestamps</li>
+      <li>SPI (SD card)</li>
+      <li>I²C (RTC module)</li>
+      <li>IoT Cloud messaging (MQTT/SenML-style) + X.509 trust</li>
+    </ul>
+  </div>
+</section>
+
+<h2>CSV schema</h2>
+<pre>date_time,date,hour,minutes,seconds,sensor_name,measurement,sensor_value,Units</pre>
+
+<h2>Analytics ideas</h2>
+<ul>
+  <li>Indoor vs outdoor deltas (bias/drift)</li>
+  <li>Rolling averages and daily seasonality</li>
+  <li>Correlation and lag analysis</li>
+  <li>Anomaly detection (jumps/outliers)</li>
+  <li>Comfort metrics (heat index / dew point)</li>
+</ul>
+
+<h2>Try it locally</h2>
+<pre>pip install -r requirements.txt
+python analysis_starter.py --csv data/sensor_log.csv
+streamlit run streamlit_app.py</pre>
+
+<footer style="margin-top:2rem;color:#6b7280">Generated project page — customize freely.</footer>
+</body>
+</html>

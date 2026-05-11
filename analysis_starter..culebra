@@ -1,0 +1,101 @@
+import argparse
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
+def load_long_csv(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    # Parse timestamp
+    df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce")
+    df = df.dropna(subset=["date_time"])
+    # Standardize
+    df["measurement"] = df["measurement"].astype(str)
+    df["sensor_name"] = df["sensor_name"].astype(str)
+    df["sensor_value"] = pd.to_numeric(df["sensor_value"], errors="coerce")
+    return df
+
+
+def pivot_measurements(df: pd.DataFrame) -> pd.DataFrame:
+    # Pivot to wide format: one row per timestamp
+    wide = (
+        df.pivot_table(index="date_time", columns="measurement", values="sensor_value", aggfunc="mean")
+          .sort_index()
+    )
+    # Helpful derived features if the expected columns exist
+    if {"Temperature", "web_temp75024"}.issubset(wide.columns):
+        wide["delta_temp_F"] = wide["Temperature"] - wide["web_temp75024"]
+    if {"Humidity", "web_humidity75024"}.issubset(wide.columns):
+        wide["delta_humidity_pct"] = wide["Humidity"] - wide["web_humidity75024"]
+
+    wide["hour"] = wide.index.hour
+    wide["day"] = wide.index.date
+    return wide
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True, help="Path to sensor_log.csv")
+    ap.add_argument("--out", default="analysis_outputs", help="Output folder")
+    args = ap.parse_args()
+
+    outdir = args.out
+    import os
+    os.makedirs(outdir, exist_ok=True)
+
+    df = load_long_csv(args.csv)
+    wide = pivot_measurements(df)
+
+    # 1) Data completeness overview
+    counts = df.groupby(["sensor_name", "measurement"]).size().sort_values(ascending=False)
+    counts.to_csv(f"{outdir}/counts_by_measurement.csv")
+
+    # 2) Time-series plot for temperature streams
+    plt.figure()
+    cols = [c for c in ["Temperature", "web_temp75024"] if c in wide.columns]
+    if cols:
+        wide[cols].plot(alpha=0.85)
+        plt.title("Temperature time series")
+        plt.ylabel("°F")
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/temperature_timeseries.png", dpi=160)
+        plt.close()
+
+    # 3) Delta histogram
+    if "delta_temp_F" in wide.columns:
+        plt.figure()
+        sns.histplot(wide["delta_temp_F"].dropna(), bins=30)
+        plt.title("Indoor - Outdoor temperature delta (°F)")
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/delta_temp_hist.png", dpi=160)
+        plt.close()
+
+    # 4) Hour-of-day profile
+    if "delta_temp_F" in wide.columns:
+        prof = wide.groupby("hour")["delta_temp_F"].mean()
+        plt.figure()
+        prof.plot(marker="o")
+        plt.title("Mean temperature delta by hour-of-day")
+        plt.xlabel("Hour")
+        plt.ylabel("Δ °F")
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/delta_temp_by_hour.png", dpi=160)
+        plt.close()
+
+    # 5) Correlation heatmap
+    numeric = wide.select_dtypes(include=[np.number]).dropna(how="all")
+    if numeric.shape[1] >= 2:
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(numeric.corr(), cmap="coolwarm", center=0)
+        plt.title("Correlation matrix")
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/correlation_heatmap.png", dpi=160)
+        plt.close()
+
+    wide.to_csv(f"{outdir}/wide_timeseries.csv")
+    print(f"Wrote outputs to: {outdir}")
+
+
+if __name__ == "__main__":
+    main()
